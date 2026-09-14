@@ -44,6 +44,8 @@ MARKER_SYMBOLS = (
     "hexagon",
 )
 
+_HEX_COLOR_RE = re.compile(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})")
+
 
 def normalize_label(value):
     """Return a display-safe label while preserving free-form label text."""
@@ -223,6 +225,11 @@ def decode_query_mapping(raw_value, allowed_values=None):
         for key, value in parsed.items()
         if key and (allowed_values is None or value in allowed_values)
     }
+
+
+def is_valid_hex_color(value):
+    """Return whether a value is a supported CSS hex color."""
+    return isinstance(value, str) and bool(_HEX_COLOR_RE.fullmatch(value))
 
 
 def deterministic_color_map(series_keys):

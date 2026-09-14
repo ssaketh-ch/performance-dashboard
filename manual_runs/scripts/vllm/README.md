@@ -118,11 +118,22 @@ python import_manual_runs_json_v2.py \
 
 ## Appending to Consolidated Dashboard
 
-After generating a CSV file, append it to the main dashboard (skip the header):
+To add the results to an existing dashboard CSV, pass the dashboard CSV as the
+importer's `--csv-file` value. The importer aligns missing optional columns,
+including `label`, before rewriting the combined file:
 
 ```bash
-tail -n +2 my-benchmark.csv >> ../../../consolidated_dashboard.csv
+python import_manual_runs_json_v2.py \
+  my-benchmark.json \
+  --model "<model>" \
+  --version "<version>" \
+  --tp <tp> \
+  --accelerator "<accelerator>" \
+  --csv-file ../../../consolidated_dashboard.csv
 ```
+
+Do not append generated CSV rows with `tail`: legacy dashboard CSVs may not
+have the optional `label` column, which would shift the appended fields.
 
 ## Output CSV Columns
 

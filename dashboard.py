@@ -40,6 +40,7 @@ from dashboard_taxonomy import (
     decode_version_label_pairs,
     deterministic_color_map,
     encode_query_mapping,
+    is_valid_hex_color,
     normalize_taxonomy_columns,
     parse_filter_values,
     sync_selected_options,
@@ -136,6 +137,7 @@ MLFLOW_BASE_URL = os.environ.get("MLFLOW_BASE_URL", "")
 MLFLOW_WORKSPACE = os.environ.get("MLFLOW_WORKSPACE", "forge-rhaiis")
 
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_dashboard_update_metadata():
     """Return the latest data update timestamp and commit metadata."""
     if S3_BUCKET:
@@ -12216,7 +12218,7 @@ def main():
                 for key, value in decode_query_mapping(
                     st.query_params.get("pp_colors")
                 ).items()
-                if value.startswith("#") and len(value) in {4, 7, 9}
+                if is_valid_hex_color(value)
             }
             url_appearance_shapes = decode_query_mapping(
                 st.query_params.get("pp_shapes"), MARKER_SYMBOLS
@@ -12407,6 +12409,21 @@ def main():
         st.session_state.filter_change_key = 0
         st.session_state.filters_were_cleared = False
     st.session_state.setdefault("show_label_filter", False)
+
+    # Keep URL synchronization defined when the active section hides the
+    # global filter controls.
+    selected_custom_isl_osl = None
+    selected_dataset_filter = None
+    selected_spec_decoding_filter = None
+    selected_prefix_caching_filter = None
+    selected_multiturn_isl_osl = None
+    selected_mt_turns = None
+    selected_mt_prefix_tokens = None
+    selected_mt_prefix_count = None
+    selected_dp = []
+    select_all_checked = st.session_state.get(
+        f"select_all_models_{st.session_state.filter_change_key}", False
+    )
 
     if not _show_global_filters:
         selected_profile = st.session_state.get(

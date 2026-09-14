@@ -16,6 +16,7 @@ from dashboard_taxonomy import (
     encode_query_mapping,
     encode_version_label_pairs,
     filter_taxonomy,
+    is_valid_hex_color,
     normalize_label,
     normalize_taxonomy_columns,
     parse_filter_values,
@@ -176,6 +177,15 @@ def test_appearance_query_mapping_round_trip():
     assert decode_query_mapping(encoded) == mapping
     assert decode_query_mapping(encoded, ["triangle-up"]) == {"run-2": "triangle-up"}
     assert decode_query_mapping("not-json") == {}
+
+
+def test_hex_color_validation_rejects_malformed_url_values():
+    assert is_valid_hex_color("#abc")
+    assert is_valid_hex_color("#A1b2C3")
+    assert is_valid_hex_color("#A1b2C3d4")
+    assert not is_valid_hex_color("#ggg")
+    assert not is_valid_hex_color("#12345")
+    assert not is_valid_hex_color("rgb(0, 0, 0)")
 
 
 def test_select_all_state_tracks_new_options_without_overriding_manual_selection():
