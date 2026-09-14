@@ -12420,9 +12420,19 @@ def main():
     selected_mt_turns = None
     selected_mt_prefix_tokens = None
     selected_mt_prefix_count = None
-    selected_dp = []
+    _filter_change_key = st.session_state.get("filter_change_key", 0)
+    _select_all_key = f"select_all_models_{_filter_change_key}"
     select_all_checked = st.session_state.get(
-        f"select_all_models_{st.session_state.filter_change_key}", False
+        _select_all_key,
+        st.session_state.get("_url_select_all_models", False),
+    )
+    _dp_key = f"dp_filter_{_filter_change_key}"
+    selected_dp = list(
+        st.session_state.get(
+            _dp_key,
+            st.session_state.get("baseline_dp_sizes", []),
+        )
+        or []
     )
 
     if not _show_global_filters:
