@@ -9,7 +9,7 @@ import pandas as pd
 DEFAULT_LABEL = "default"
 UNLABELED = "Unlabeled"
 
-_PRODUCT_FAMILIES = {
+_VERSION_PREFIXES = {
     "rhaiis": "RHAIIS",
     "vllm": "vLLM",
     "sglang": "sglang",
@@ -21,16 +21,16 @@ _PRODUCT_RELEASE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Okabe-Ito colors plus a few high-contrast extensions.
+# Dark, colorblind-safe colors with enough contrast against the light plot theme.
 COLORBLIND_SAFE_PALETTE = (
-    "#0072B2",
+    "#005AB5",
     "#D55E00",
     "#009E73",
-    "#CC79A7",
-    "#E69F00",
-    "#56B4E9",
-    "#F0E442",
-    "#000000",
+    "#7A3E9D",
+    "#A6761D",
+    "#0072B2",
+    "#B2182B",
+    "#333333",
 )
 
 MARKER_SYMBOLS = (
@@ -55,15 +55,10 @@ def normalize_label(value):
     return label or UNLABELED
 
 
-def derive_product_family(version):
-    """Derive the product family from a release version or wrapper name."""
-    if not isinstance(version, str):
-        return "Other"
-    match = _PRODUCT_RELEASE_RE.search(version.strip())
-    if match:
-        return _PRODUCT_FAMILIES[match.group("prefix").lower()]
-    prefix = version.strip().split("-", 1)[0].lower()
-    return _PRODUCT_FAMILIES.get(prefix, "Other")
+def display_label(value):
+    """Return the compact UI value for an optional label."""
+    normalized = normalize_label(value)
+    return "—" if normalized in {DEFAULT_LABEL, UNLABELED} else normalized
 
 
 def split_legacy_version(version):
@@ -75,7 +70,7 @@ def split_legacy_version(version):
     if not match:
         return raw_version, DEFAULT_LABEL
 
-    prefix = _PRODUCT_FAMILIES[match.group("prefix").lower()]
+    prefix = _VERSION_PREFIXES[match.group("prefix").lower()]
     if match.start() == 0:
         release = f"{prefix}-{match.group('release')}"
     else:
@@ -104,7 +99,6 @@ def normalize_taxonomy_columns(df):
     changed_versions = source_versions.ne(canonical_versions)
     if changed_versions.any():
         result["legacy_version"] = source_versions.where(changed_versions, "")
-    result["product_family"] = result["version"].map(derive_product_family)
     if "uuid" not in result.columns:
         result["uuid"] = ""
     else:
@@ -116,11 +110,10 @@ def normalize_taxonomy_columns(df):
     return result
 
 
-def filter_taxonomy(df, families=None, versions=None, labels=None, uuids=None):
-    """Apply the optional family/version/label/run filters to a DataFrame."""
+def filter_taxonomy(df, versions=None, labels=None, uuids=None):
+    """Apply the optional version/label/run filters to a DataFrame."""
     result = df
     for column, values in (
-        ("product_family", families),
         ("version", versions),
         ("label", labels),
         ("uuid", uuids),
@@ -155,14 +148,20 @@ def decode_version_label_pairs(raw_value):
     ]
 
 
-def version_label_pair_mask(df, pairs):
-    """Return a mask for rows matching exact version/label pairs."""
+def version_label_pair_mask(df, pairs, *, include_default=False):
+    """Return a mask for rows matching selected version/label pairs."""
     if not pairs:
         return pd.Series(True, index=df.index)
     if not {"version", "label"}.issubset(df.columns):
         return pd.Series(False, index=df.index)
     pair_index = pd.MultiIndex.from_frame(df[["version", "label"]].astype(str))
-    return pd.Series(pair_index.isin(set(pairs)), index=df.index)
+    mask = pd.Series(pair_index.isin(set(pairs)), index=df.index)
+    if include_default:
+        selected_versions = {version for version, _ in pairs}
+        mask |= df["version"].isin(selected_versions) & df["label"].isin(
+            {DEFAULT_LABEL, UNLABELED}
+        )
+    return mask
 
 
 def parse_filter_values(raw_value, available_values):
@@ -185,7 +184,6 @@ def sync_selected_options(previous, available, *, select_all=False):
 
 
 def taxonomy_query_params(
-    families=None,
     labels=None,
     uuids=None,
     version_label_pairs=None,
@@ -194,7 +192,6 @@ def taxonomy_query_params(
     params = {
         key: ",".join(values)
         for key, values in (
-            ("families", families),
             ("labels", labels),
             ("uuids", uuids),
         )
@@ -260,7 +257,9 @@ def compact_series_label(
         model = model[:27] + "…"
     version = str(row.get("version") or "?")
     label = normalize_label(row.get("label"))
-    release = version + (f" · {label}" if include_label else "")
+    release = version
+    if include_label and label not in {DEFAULT_LABEL, UNLABELED}:
+        release += f" · {label}"
     parts = []
     if include_accelerator:
         parts.append(accelerator)
@@ -300,17 +299,58 @@ def compact_series_label(
     return " | ".join(parts)
 
 
+def _runtime_args_key(value):
+    """Normalize runtime-argument ordering for duplicate-run comparison."""
+    if value is None or pd.isna(value):
+        return ""
+    return ";".join(
+        sorted(" ".join(part.split()) for part in str(value).split(";") if part.strip())
+    )
+
+
 def add_trace_metadata(df, series_column="run_identifier", legend_options=None):
-    """Add duplicate-run legend labels, line styles, and marker symbols."""
+    """Add duplicate-run legend labels, styles, shapes, and opacity."""
     result = df.copy()
     legend_options = legend_options or {}
     if "uuid" not in result.columns:
         result["uuid"] = ""
     result["uuid"] = result["uuid"].fillna("").astype(str).str.strip()
+    if "runtime_args" not in result.columns:
+        result["runtime_args"] = ""
+    result["runtime_config_key"] = result["runtime_args"].map(_runtime_args_key)
+    for column in ("spec_decoding", "prefix_caching", "turns", "prefix_tokens", "prefix_count"):
+        if column in result.columns:
+            result["runtime_config_key"] += (
+                ";" + column + "=" + result[column].fillna("").astype(str).str.strip()
+            )
+
+    run_info = result.loc[
+        result["uuid"].ne(""),
+        [series_column, "uuid", "runtime_config_key"],
+    ].drop_duplicates([series_column, "uuid"])
+    run_info["runtime_variant_count"] = run_info.groupby(series_column)[
+        "runtime_config_key"
+    ].transform("nunique")
+    run_info = run_info.sort_values([series_column, "uuid"])
+    run_info["run_rank"] = run_info.groupby(series_column).cumcount()
+    result = result.merge(
+        run_info[[series_column, "uuid", "runtime_variant_count", "run_rank"]],
+        how="left",
+        on=[series_column, "uuid"],
+    )
+
     run_counts = result.groupby(series_column)["uuid"].transform(
         lambda values: values[values != ""].nunique()
     )
     result["line_style"] = run_counts.gt(1).map({True: "dot", False: "solid"})
+    result["line_opacity"] = 1.0
+    exact_repeats = (
+        run_counts.gt(1)
+        & result["uuid"].ne("")
+        & result["runtime_variant_count"].eq(1)
+        & result["run_rank"].gt(0)
+    )
+    result.loc[exact_repeats, "line_opacity"] = 0.55
     result["trace_label"] = result[series_column].astype(str)
     result["legend_label"] = result.apply(
         lambda row: compact_series_label(row, **legend_options), axis=1
@@ -324,16 +364,4 @@ def add_trace_metadata(df, series_column="run_identifier", legend_options=None):
     )
 
     result["marker_symbol"] = "circle"
-    for _, indexes in result.groupby(series_column, sort=False).groups.items():
-        run_ids = sorted(
-            run_id for run_id in result.loc[indexes, "uuid"].unique() if run_id
-        )
-        if len(run_ids) > 1:
-            symbols = {
-                run_id: MARKER_SYMBOLS[index % len(MARKER_SYMBOLS)]
-                for index, run_id in enumerate(run_ids)
-            }
-            result.loc[indexes, "marker_symbol"] = (
-                result.loc[indexes, "uuid"].map(symbols).fillna("circle")
-            )
     return result
