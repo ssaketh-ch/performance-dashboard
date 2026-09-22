@@ -45,6 +45,7 @@ from dashboard_taxonomy import (
     parse_filter_values,
     sync_selected_options,
     taxonomy_query_params,
+    uses_legacy_methodology,
     version_label_pair_mask,
 )
 from intelliconfig import render_intelliconfig_section
@@ -3955,6 +3956,15 @@ def render_performance_plots_section(filtered_df, use_expander=True):
                 args=("performance_plots_expanded",),
             )
             y_axis = y_axis_options[y_axis_label]
+
+        if (
+            ("ttft" in x_axis.lower() or "ttft" in y_axis.lower())
+            and filtered_df["version"].map(uses_legacy_methodology).any()
+        ):
+            st.markdown(
+                "**📝 Methodology note:** This selection includes runs using the previous methodology. "
+                "vLLM v0.26.0+ onwards and RHAIIS 3.6+ use the updated benchmark methodology."
+            )
 
         max_conc = None
         if x_axis != "intended concurrency":

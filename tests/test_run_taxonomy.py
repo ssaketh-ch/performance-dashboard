@@ -23,6 +23,7 @@ from dashboard_taxonomy import (
     split_legacy_version,
     sync_selected_options,
     taxonomy_query_params,
+    uses_legacy_methodology,
     version_label_pair_mask,
 )
 from manual_runs.scripts.vllm.import_manual_runs_json_v2 import parse_guidellm_json
@@ -102,6 +103,16 @@ def test_normalization_preserves_composite_source_version():
     assert result["version"].tolist() == ["vLLM-0.24.0", "RHAIIS-3.5-GA"]
     assert result["label"].tolist() == ["nn-d1", DEFAULT_LABEL]
     assert result["legacy_version"].tolist() == ["vLLM-0.24.0-nn-d1", ""]
+
+
+def test_methodology_release_thresholds():
+    assert uses_legacy_methodology("vLLM-0.24.0")
+    assert uses_legacy_methodology("AIC-0.10.0-vLLM-0.24.0-pcon")
+    assert uses_legacy_methodology("RHAIIS-3.5-GA")
+    assert not uses_legacy_methodology("vLLM-0.26.0")
+    assert not uses_legacy_methodology("vLLM-0.28.0")
+    assert not uses_legacy_methodology("RHAIIS-3.6-GA")
+    assert not uses_legacy_methodology("sglang-0.5.5")
 
 
 def test_release_selection_defaults_to_plain_runs_until_label_is_selected():

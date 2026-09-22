@@ -82,6 +82,27 @@ def split_legacy_version(version):
     return release, normalize_label(label) if label else DEFAULT_LABEL
 
 
+def uses_legacy_methodology(version):
+    """Return whether a RHAIIS/vLLM release predates the methodology change."""
+    release, _ = split_legacy_version(version)
+    match = re.search(
+        r"(?P<prefix>RHAIIS|vLLM)-?(?P<release>\d+(?:\.\d+)+)",
+        str(release),
+        re.IGNORECASE,
+    )
+    if not match:
+        return False
+
+    release_parts = tuple(int(part) for part in match.group("release").split("."))
+    release_parts += (0,) * (3 - len(release_parts))
+    threshold = (
+        (3, 6, 0)
+        if match.group("prefix").casefold() == "rhaiis"
+        else (0, 26, 0)
+    )
+    return release_parts < threshold
+
+
 def normalize_taxonomy_columns(df):
     """Add compatible taxonomy columns without changing the source data."""
     result = df.copy()
