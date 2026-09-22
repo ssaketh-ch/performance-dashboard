@@ -4328,7 +4328,7 @@ def render_performance_plots_section(filtered_df, use_expander=True):
             "Click legend entries to show or hide a series. Dotted runs with the same color are duplicate runs with identical runtime args that differ only by UUID. Dotted runs with different shapes have different runtime args. Hover a point for its label, UUID, and important runtime args."
         )
 
-        with st.expander("🎨 Legend", expanded=False, width=675):
+        with st.expander("🎨 Customize", expanded=False, width=725):
             if not customizable_traces:
                 st.caption(
                     "Color and shape customization is available for repeated runs only."

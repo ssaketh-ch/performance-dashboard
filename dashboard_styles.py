@@ -197,21 +197,25 @@ def get_app_css():
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12) !important;
     }
 
-    /* Keep the closed legend trigger compact; widen it only when opened. */
+    /* Keep the closed customize trigger compact; widen it only when opened. */
     [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]) {
-        width: 120px !important;
-        max-width: 120px !important;
+        width: 135px !important;
+        max-width: 135px !important;
     }
     [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]):has(details[open]) {
-        width: 675px !important;
-        max-width: min(675px, calc(100vw - 2rem)) !important;
+        width: 725px !important;
+        max-width: min(725px, calc(100vw - 2rem)) !important;
     }
     [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]) > details > summary {
-        width: 120px !important;
+        width: 135px !important;
         min-height: 40px !important;
         height: 40px !important;
         padding: 8px 10px !important;
         box-sizing: border-box !important;
+        white-space: nowrap !important;
+    }
+    [data-testid="stExpander"]:has([class*="st-key-performance_appearance_series"]) > details > summary p {
+        white-space: nowrap !important;
     }
 
     [data-baseweb="select"] [data-baseweb="menu"] {
