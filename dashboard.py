@@ -43,6 +43,7 @@ from dashboard_taxonomy import (
     is_valid_hex_color,
     normalize_taxonomy_columns,
     parse_filter_values,
+    split_legacy_version,
     sync_selected_options,
     taxonomy_query_params,
     uses_legacy_methodology,
@@ -5987,6 +5988,28 @@ def render_compare_versions_summary_section(df, use_expander=True):
         default_v1 = OVERVIEW_CURRENT
         default_v2 = OVERVIEW_PREVIOUS
 
+        def _compare_label_options(version):
+            if "label" not in df.columns:
+                return [DEFAULT_LABEL]
+            labels = sorted(
+                df.loc[df["version"] == version, "label"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            if DEFAULT_LABEL in labels:
+                labels.remove(DEFAULT_LABEL)
+                labels.insert(0, DEFAULT_LABEL)
+            return labels or [DEFAULT_LABEL]
+
+        def _sync_compare_label(key, version):
+            options = _compare_label_options(version)
+            current = st.session_state.get(key)
+            if current not in options:
+                st.session_state[key] = options[0]
+            return options
+
         # Find index for default version 1
         v1_default_index = 0
         if default_v1 in available_versions:
@@ -6001,6 +6024,17 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 on_change=keep_expander_open,
                 args=("compare_versions_summary_expanded",),
             )
+            label_1_options = _sync_compare_label(
+                "compare_summary_v1_label", version_1
+            )
+            compare_label_1 = st.selectbox(
+                "Select Label 1 (Baseline)",
+                options=label_1_options,
+                format_func=display_label,
+                key="compare_summary_v1_label",
+                on_change=keep_expander_open,
+                args=("compare_versions_summary_expanded",),
+            )
             aic_mode = st.toggle(
                 "AIC Mode",
                 key="compare_aic_mode",
@@ -6012,9 +6046,13 @@ def render_compare_versions_summary_section(df, use_expander=True):
         def _swap_versions():
             v1 = st.session_state.get("compare_summary_v1")
             v2 = st.session_state.get("compare_summary_v2")
+            v1_label = st.session_state.get("compare_summary_v1_label")
+            v2_label = st.session_state.get("compare_summary_v2_label")
             if v1 and v2:
                 st.session_state["compare_summary_v1"] = v2
                 st.session_state["compare_summary_v2"] = v1
+                st.session_state["compare_summary_v1_label"] = v2_label
+                st.session_state["compare_summary_v2_label"] = v1_label
 
         with swap_col:
             st.markdown("<div style='height: 1.65rem'></div>", unsafe_allow_html=True)
@@ -6026,7 +6064,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             )
 
         with col2:
-            version_2_options = [v for v in available_versions if v != version_1]
+            # Allow the same release on both sides so users can compare labels.
+            version_2_options = available_versions
             # Find index for default version 2
             v2_default_index = 0
             if default_v2 in version_2_options:
@@ -6044,6 +6083,19 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 if version_2_options
                 else None
             )
+            compare_label_2 = DEFAULT_LABEL
+            if version_2:
+                label_2_options = _sync_compare_label(
+                    "compare_summary_v2_label", version_2
+                )
+                compare_label_2 = st.selectbox(
+                    "Select Label 2 (Comparison)",
+                    options=label_2_options,
+                    format_func=display_label,
+                    key="compare_summary_v2_label",
+                    on_change=keep_expander_open,
+                    args=("compare_versions_summary_expanded",),
+                )
 
         with col3:
             # Default to H200 if available
@@ -6245,14 +6297,23 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.warning("⚠️ Please select a second version to compare.")
             return
 
+        def _compare_display_name(version, label):
+            label_text = display_label(label)
+            return version if label_text == "—" else f"{version} — {label_text}"
+
+        version_1_display = _compare_display_name(version_1, compare_label_1)
+        version_2_display = _compare_display_name(version_2, compare_label_2)
+
         # Filter data for each version based on selected accelerator and profile
         base_mask_v1 = (
             (df["version"] == version_1)
+            & (df["label"] == compare_label_1)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
         )
         base_mask_v2 = (
             (df["version"] == version_2)
+            & (df["label"] == compare_label_2)
             & (df["accelerator"] == selected_accelerator)
             & (df["profile"] == selected_profile)
         )
@@ -6406,7 +6467,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         if not common_models:
             st.warning(
-                f"⚠️ No common models found between {version_1} and {version_2} "
+                f"⚠️ No common models found between {version_1_display} and {version_2_display} "
                 f"for {selected_accelerator} with profile {selected_profile}."
             )
             return
@@ -6426,7 +6487,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
         if not comparison_pairs:
             st.warning(
                 f"⚠️ No comparable model configurations found between "
-                f"{version_1} and {version_2} for {selected_accelerator} "
+                f"{version_1_display} and {version_2_display} for {selected_accelerator} "
                 f"with profile {selected_profile}."
             )
             return
@@ -6442,8 +6503,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             for m, v1_cfg, v2_cfg in cross_pairs:
                 m_short = m.split("/")[-1] if "/" in m else m
                 lines.append(
-                    f"- **{m_short}**: {version_1} uses {_config_label(v1_cfg)}, "
-                    f"{version_2} uses {_config_label(v2_cfg)}"
+                    f"- **{m_short}**: {version_1_display} uses {_config_label(v1_cfg)}, "
+                    f"{version_2_display} uses {_config_label(v2_cfg)}"
                 )
             st.warning(
                 "⚠️ **Cross-parallelism comparison** — the following models use "
@@ -6472,7 +6533,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
         if all_common_concurrencies_sorted:
             # Key includes filter selections so the widget resets when filters change
-            conc_key = f"compare_summary_conc_{version_1}_{version_2}_{selected_accelerator}_{selected_profile}"
+            conc_key = (
+                f"compare_summary_conc_{version_1}_{compare_label_1}_{version_2}_"
+                f"{compare_label_2}_{selected_accelerator}_{selected_profile}"
+            )
             default_concurrencies = [
                 c for c in all_common_concurrencies_sorted if c > 1
             ]
@@ -6610,7 +6674,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
                 **Note**: Each accelerator-TP combination is compared independently across all common concurrency levels.
                     """)
-        st.markdown(f"**Comparing:** {version_1} vs {version_2}")
+        st.markdown(f"**Comparing:** {version_1_display} vs {version_2_display}")
 
         # Define metrics to compare (AIC mode hides metrics unavailable in AIC data)
         metrics_config = {
@@ -6674,8 +6738,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
         _seen_dup_checks = set()
         for model, v1_cfg, v2_cfg in comparison_pairs:
             for df_check, ver_name, cfg in [
-                (df_v1, version_1, v1_cfg),
-                (df_v2, version_2, v2_cfg),
+                (df_v1, version_1_display, v1_cfg),
+                (df_v2, version_2_display, v2_cfg),
             ]:
                 dup_key = (ver_name, model, cfg)
                 if dup_key in _seen_dup_checks:
@@ -6729,11 +6793,11 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     sign = "+" if pct_diff > 0 else ""
                     if metric_config["show_concurrency"] and v1_peak is not None:
                         cell_text = (
-                            f"{version_1} ({sign}{pct_diff:.1f}%) "
+                            f"{version_1_display} ({sign}{pct_diff:.1f}%) "
                             f"peak@{v1_peak} vs {v2_peak}"
                         )
                     else:
-                        cell_text = f"{version_1} ({sign}{pct_diff:.1f}%)"
+                        cell_text = f"{version_1_display} ({sign}{pct_diff:.1f}%)"
 
                     if is_similar:
                         color = "🟡"
@@ -6764,7 +6828,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 )
                 st.markdown(f"#### {display_title} vs Concurrency")
                 st.markdown(
-                    f"**{version_1}** vs **{version_2}** &nbsp;|&nbsp; "
+                    f"**{version_1_display}** vs **{version_2_display}** &nbsp;|&nbsp; "
                     f"**{selected_accelerator}** &nbsp;|&nbsp; ISL/OSL: **{profile_short}**"
                     f"{real_dataset_subtitle}"
                 )
@@ -6878,12 +6942,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             x=x_vals,
                             y=md["v1"],
                             mode="lines+markers",
-                            name=f"{md['label']} ({version_1})",
+                            name=f"{md['label']} ({version_1_display})",
                             line={"color": c_v1, "width": 2.5},
                             marker={"size": 8},
                             legendgroup=md["label"],
                             hovertemplate=(
-                                f"<b>{md['label']}</b> — {version_1}<br>"
+                                f"<b>{md['label']}</b> — {version_1_display}<br>"
                                 "Concurrency: %{x}<br>"
                                 "Value: %{y:,.2f}<extra></extra>"
                             ),
@@ -6895,12 +6959,12 @@ def render_compare_versions_summary_section(df, use_expander=True):
                             x=x_vals,
                             y=md["v2"],
                             mode="lines+markers",
-                            name=f"{md['label']} ({version_2})",
+                            name=f"{md['label']} ({version_2_display})",
                             line={"color": c_v2, "width": 2.5},
                             marker={"size": 8},
                             legendgroup=md["label"],
                             hovertemplate=(
-                                f"<b>{md['label']}</b> — {version_2}<br>"
+                                f"<b>{md['label']}</b> — {version_2_display}<br>"
                                 "Concurrency: %{x}<br>"
                                 "Value: %{y:,.2f}<extra></extra>"
                             ),
@@ -6949,8 +7013,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                 st.caption(
                     "💡 **Tip:** Click a legend entry to toggle it. "
                     "Double-click to isolate a single trace. "
-                    f"Warm colors (reds/oranges) = **{version_1}**, "
-                    f"cool colors (blues/greens) = **{version_2}**."
+                    f"Warm colors (reds/oranges) = **{version_1_display}**, "
+                    f"cool colors (blues/greens) = **{version_2_display}**."
                 )
 
                 if agg == "geom_mean":
@@ -7047,7 +7111,7 @@ def render_compare_versions_summary_section(df, use_expander=True):
             )
 
             csv_data = summary_df.to_csv(index=False).encode("utf-8")
-            _raw = f"compare_{version_1}_vs_{version_2}_{selected_accelerator}_{profile_short}"
+            _raw = f"compare_{version_1_display}_vs_{version_2_display}_{selected_accelerator}_{profile_short}"
             safe_name = (
                 _raw.replace("/", "-")
                 .replace(" ", "_")
@@ -7066,8 +7130,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
             st.markdown("---")
             st.markdown(
                 f"**Legend:** "
-                f"🟢 {version_1} performs better than {version_2} | "
-                f"🔴 {version_1} performs worse than {version_2} | "
+                f"🟢 {version_1_display} performs better than {version_2_display} | "
+                f"🔴 {version_1_display} performs worse than {version_2_display} | "
                 f"🟡 Similar Performance (< 5% difference)"
             )
 
@@ -7187,16 +7251,16 @@ def render_compare_versions_summary_section(df, use_expander=True):
 
                     if higher_is_better:
                         if pct_diff > 5:
-                            return f"{version_1} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                            return f"{version_1_display} has +{abs(pct_diff):.1f}% higher {metric_name}"
                         elif pct_diff < -5:
-                            return f"{version_2} has +{abs(pct_diff):.1f}% higher {metric_name}"
+                            return f"{version_2_display} has +{abs(pct_diff):.1f}% higher {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
                     else:
                         if pct_diff < -5:
-                            return f"{version_1} has {abs(pct_diff):.1f}% lower {metric_name}"
+                            return f"{version_1_display} has {abs(pct_diff):.1f}% lower {metric_name}"
                         elif pct_diff > 5:
-                            return f"{version_2} has {abs(pct_diff):.1f}% lower {metric_name}"
+                            return f"{version_2_display} has {abs(pct_diff):.1f}% lower {metric_name}"
                         else:
                             return f"Similar (~{abs(pct_diff):.1f}% difference)"
 
@@ -7204,8 +7268,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     detail_rows = [
                         {
                             "Metric": "Peak Output Throughput (output tok/s)",
-                            version_1: f"{format_value(v1_peak_throughput)} tok/s at {v1_peak_conc} concurrent users",
-                            version_2: f"{format_value(v2_peak_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            version_1_display: f"{format_value(v1_peak_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2_display: f"{format_value(v2_peak_throughput)} tok/s at {v2_peak_conc} concurrent users",
                             "Difference/Winner": get_winner_text(
                                 v1_peak_throughput,
                                 v2_peak_throughput,
@@ -7217,8 +7281,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     detail_rows.append(
                         {
                             "Metric": "Total Throughput (input + output tok/s)",
-                            version_1: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
-                            version_2: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
+                            version_1_display: f"{format_value(v1_total_throughput)} tok/s at {v1_peak_conc} concurrent users",
+                            version_2_display: f"{format_value(v2_total_throughput)} tok/s at {v2_peak_conc} concurrent users",
                             "Difference/Winner": get_winner_text(
                                 v1_total_throughput,
                                 v2_total_throughput,
@@ -7230,8 +7294,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                     detail_rows.append(
                         {
                             "Metric": f"Median E2E Latency{latency_conc_label}",
-                            version_1: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
-                            version_2: f"{format_value(v2_e2e_latency, 's', 0, round_up=True)}",
+                            version_1_display: f"{format_value(v1_e2e_latency, 's', 0, round_up=True)}",
+                            version_2_display: f"{format_value(v2_e2e_latency, 's', 0, round_up=True)}",
                             "Difference/Winner": get_winner_text(
                                 v1_e2e_latency, v2_e2e_latency, False, "E2E latency"
                             ),
@@ -7257,10 +7321,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"TTFT Median{latency_conc_label}",
-                                version_1: f"{format_value(v1_ttft_median_s, 's', 2, round_up=True)}"
+                                version_1_display: f"{format_value(v1_ttft_median_s, 's', 2, round_up=True)}"
                                 if pd.notna(v1_ttft_median)
                                 else "N/A",
-                                version_2: f"{format_value(v2_ttft_median_s, 's', 2, round_up=True)}"
+                                version_2_display: f"{format_value(v2_ttft_median_s, 's', 2, round_up=True)}"
                                 if pd.notna(v2_ttft_median)
                                 else "N/A",
                                 "Difference/Winner": get_winner_text(
@@ -7271,10 +7335,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"TPOT Median{latency_conc_label}",
-                                version_1: f"{format_value(v1_tpot_median, 'ms', 2, round_up=True)}"
+                                version_1_display: f"{format_value(v1_tpot_median, 'ms', 2, round_up=True)}"
                                 if pd.notna(v1_tpot_median)
                                 else "N/A",
-                                version_2: f"{format_value(v2_tpot_median, 'ms', 2, round_up=True)}"
+                                version_2_display: f"{format_value(v2_tpot_median, 'ms', 2, round_up=True)}"
                                 if pd.notna(v2_tpot_median)
                                 else "N/A",
                                 "Difference/Winner": get_winner_text(
@@ -7286,10 +7350,10 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"TTFT P95{latency_conc_label}",
-                                version_1: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
+                                version_1_display: f"{format_value(v1_ttft / 1000, 's', 2, round_up=True)}"
                                 if pd.notna(v1_ttft)
                                 else "N/A",
-                                version_2: f"{format_value(v2_ttft / 1000, 's', 2, round_up=True)}"
+                                version_2_display: f"{format_value(v2_ttft / 1000, 's', 2, round_up=True)}"
                                 if pd.notna(v2_ttft)
                                 else "N/A",
                                 "Difference/Winner": get_winner_text(
@@ -7300,8 +7364,8 @@ def render_compare_versions_summary_section(df, use_expander=True):
                         detail_rows.append(
                             {
                                 "Metric": f"ITL P95{latency_conc_label}",
-                                version_1: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
-                                version_2: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
+                                version_1_display: f"{format_value(v1_itl, 'ms', 0, round_up=True)}",
+                                version_2_display: f"{format_value(v2_itl, 'ms', 0, round_up=True)}",
                                 "Difference/Winner": get_winner_text(
                                     v1_itl, v2_itl, False, "P95 ITL"
                                 ),
@@ -7321,7 +7385,9 @@ def render_compare_versions_summary_section(df, use_expander=True):
         _cv_url_params = {}
         _cv_keys = {
             "cv_v1": "compare_summary_v1",
+            "cv_v1_label": "compare_summary_v1_label",
             "cv_v2": "compare_summary_v2",
+            "cv_v2_label": "compare_summary_v2_label",
             "cv_gpu": "compare_summary_accelerator",
             "cv_profile": "compare_summary_profile",
         }
@@ -7330,11 +7396,16 @@ def render_compare_versions_summary_section(df, use_expander=True):
             if val is not None:
                 _cv_url_params[url_key] = str(val)
         cv_v1 = st.session_state.get("compare_summary_v1")
+        cv_v1_label = st.session_state.get("compare_summary_v1_label")
         cv_v2 = st.session_state.get("compare_summary_v2")
+        cv_v2_label = st.session_state.get("compare_summary_v2_label")
         cv_gpu = st.session_state.get("compare_summary_accelerator")
         cv_prof = st.session_state.get("compare_summary_profile")
-        if all([cv_v1, cv_v2, cv_gpu, cv_prof]):
-            conc_key = f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+        if all([cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof]):
+            conc_key = (
+                f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
+            )
             conc_val = st.session_state.get(conc_key)
             if conc_val is not None and isinstance(conc_val, list):
                 _cv_url_params["cv_conc"] = ",".join(map(str, conc_val))
@@ -11762,7 +11833,9 @@ def main():
             },
             "compare_versions": {
                 "cv_v1": "compare_summary_v1",
+                "cv_v1_label": "compare_summary_v1_label",
                 "cv_v2": "compare_summary_v2",
+                "cv_v2_label": "compare_summary_v2_label",
                 "cv_gpu": "compare_summary_accelerator",
                 "cv_profile": "compare_summary_profile",
             },
@@ -11845,12 +11918,17 @@ def main():
                 # Compare Versions: also encode the dynamic concurrency key
                 if slug == "compare_versions":
                     cv_v1 = st.session_state.get("compare_summary_v1")
+                    cv_v1_label = st.session_state.get("compare_summary_v1_label")
                     cv_v2 = st.session_state.get("compare_summary_v2")
+                    cv_v2_label = st.session_state.get("compare_summary_v2_label")
                     cv_gpu = st.session_state.get("compare_summary_accelerator")
                     cv_prof = st.session_state.get("compare_summary_profile")
-                    if all([cv_v1, cv_v2, cv_gpu, cv_prof]):
+                    if all(
+                        [cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof]
+                    ):
                         conc_key = (
-                            f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+                            f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                            f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
                         )
                         conc_val = st.session_state.get(conc_key)
                         if conc_val is not None and isinstance(conc_val, list):
@@ -12033,6 +12111,21 @@ def main():
                                         url_section_filters[ss_key] = int(raw)
                                 else:
                                     url_section_filters[ss_key] = raw
+
+                    if slug == "compare_versions":
+                        for version_key, label_key in (
+                            ("compare_summary_v1", "compare_summary_v1_label"),
+                            ("compare_summary_v2", "compare_summary_v2_label"),
+                        ):
+                            raw_version = url_section_filters.get(version_key)
+                            if not raw_version:
+                                continue
+                            canonical_version, inferred_label = split_legacy_version(
+                                raw_version
+                            )
+                            if canonical_version in all_versions:
+                                url_section_filters[version_key] = canonical_version
+                                url_section_filters.setdefault(label_key, inferred_label)
 
             return (
                 url_accelerators,
@@ -12220,13 +12313,18 @@ def main():
             # Compare Versions: reconstruct the dynamic concurrency key
             if url_section and SECTION_TO_SLUG.get(url_section) == "compare_versions":
                 cv_v1 = url_section_filters.get("compare_summary_v1")
+                cv_v1_label = url_section_filters.get("compare_summary_v1_label")
                 cv_v2 = url_section_filters.get("compare_summary_v2")
+                cv_v2_label = url_section_filters.get("compare_summary_v2_label")
                 cv_gpu = url_section_filters.get("compare_summary_accelerator")
                 cv_prof = url_section_filters.get("compare_summary_profile")
                 raw_conc = st.query_params.get("cv_conc")
-                if all([cv_v1, cv_v2, cv_gpu, cv_prof, raw_conc]):
+                if all(
+                    [cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof, raw_conc]
+                ):
                     conc_key = (
-                        f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+                        f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                        f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
                     )
                     conc_vals = [
                         int(v.strip())
@@ -13775,12 +13873,17 @@ def main():
                 # Compare Versions: also encode the dynamic concurrency key
                 if slug == "compare_versions":
                     cv_v1 = st.session_state.get("compare_summary_v1")
+                    cv_v1_label = st.session_state.get("compare_summary_v1_label")
                     cv_v2 = st.session_state.get("compare_summary_v2")
+                    cv_v2_label = st.session_state.get("compare_summary_v2_label")
                     cv_gpu = st.session_state.get("compare_summary_accelerator")
                     cv_prof = st.session_state.get("compare_summary_profile")
-                    if all([cv_v1, cv_v2, cv_gpu, cv_prof]):
+                    if all(
+                        [cv_v1, cv_v1_label, cv_v2, cv_v2_label, cv_gpu, cv_prof]
+                    ):
                         conc_key = (
-                            f"compare_summary_conc_{cv_v1}_{cv_v2}_{cv_gpu}_{cv_prof}"
+                            f"compare_summary_conc_{cv_v1}_{cv_v1_label}_{cv_v2}_"
+                            f"{cv_v2_label}_{cv_gpu}_{cv_prof}"
                         )
                         conc_val = st.session_state.get(conc_key)
                         if conc_val is not None and isinstance(conc_val, list):
